@@ -1,0 +1,23 @@
+{
+    "infer_steps": 20,
+    "target_video_length": 33,
+    "text_len": 512,
+    "target_height": 480,
+    "target_width": 832,
+    "self_attn_1_type": "flagos_flash_attn",
+    "cross_attn_1_type": "flagos_flash_attn",
+    "cross_attn_2_type": "flagos_flash_attn",
+    "rms_norm_type": "flagos_rms_norm",
+    "layer_norm_type": "flagos_layer_norm",
+    "rope_type": "flagos_rope",
+    "dit_quantized": true,
+    "dit_quant_scheme": "flagos-fp8",
+    "sample_guide_scale": 6,
+    "sample_shift": 8,
+    "enable_cfg": true,
+    "cpu_offload": true,
+    "lazy_load": true,
+    "t5_cpu_offload": true,
+    "use_tiling_vae": true,
+    "modulate_type": "torch"
+}
