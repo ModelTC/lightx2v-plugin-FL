@@ -1,4 +1,4 @@
-# lightx2v-plugin-fl
+# lightx2v-plugin-FL
 
 A **pluggable** [LightX2V](https://github.com/ModelTC/LightX2V) backend built on
 the [FlagOS](https://github.com/FlagOpen) unified multi-chip stack:
@@ -23,20 +23,20 @@ FlagCX. Add a chip to FlagOS → it works in LightX2V through this plugin, no ne
 LightX2V code.
 
 ```
-            ┌─────────────────────────────────────────────┐
+            ┌──────────────────────────────────────────────┐
             │            LightX2V (host framework)         │
             │   registry_factory: MM/ATTN/RMS/ROPE keys    │
-            └───────────────┬─────────────────────────────┘
-                            │ "flagos*" registry keys
-            ┌───────────────▼─────────────────────────────┐
-            │          lightx2v-plugin-fl (this repo)      │
+            └────────────────┬─────────────────────────────┘
+                             │ "flagos*" registry keys
+            ┌────────────────▼─────────────────────────────┐
+            │          lightx2v-plugin-FL (this repo)      │
             │  device/  ops/{attn,mm,norm,rope}  enable.py │
-            └───────┬───────────────────────┬─────────────┘
-              compute │                 comm │
-            ┌─────────▼────────┐   ┌─────────▼──────────┐
-            │     FlagGems     │   │       FlagCX       │
-            │ (Triton kernels) │   │ (ProcessGroup PG)  │
-            └───────┬──────────┘   └─────────┬──────────┘
+            └──────────┬────────────────────────┬──────────┘
+               compute │                   comm │
+            ┌──────────▼─────────┐   ┌──────────▼──────────┐
+            │      FlagGems      │   │        FlagCX       │
+            │  (Triton kernels)  │   │  (ProcessGroup PG)  │
+            └────────┬───────────┘   └──────────┬──────────┘
    NVIDIA · Ascend · Cambricon · MetaX · MUSA · Kunlun · Iluvatar · …
 ```
 
@@ -139,4 +139,4 @@ roadmap.
 
 ## License
 
-Apache-2.0.
+Apache-2.0
