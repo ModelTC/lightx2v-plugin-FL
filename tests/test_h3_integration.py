@@ -52,11 +52,7 @@ def test_sage_dense_abi_and_explicit_precision(callers, monkeypatch):
     )
     weight = load_op("sage_attn", monkeypatch).FlagOSSageAttnWeight()
     weight.config = {
-        "fl_dispatch": {
-            "sage_attention": {
-                "parameters": {"pv_dtype": "fp8"}
-            }
-        }
+        "fl_dispatch": {"sage_attention": {"parameters": {"pv_dtype": "fp8"}}}
     }
     q = torch.randn(17, 2, 128)
     assert torch.equal(
