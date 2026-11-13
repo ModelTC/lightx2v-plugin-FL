@@ -119,7 +119,7 @@ Defaults exclude `copy`, `copy_`, `zero`, `zero_`, `is_same_size`. A user blackl
 |---|---|---|
 | NVIDIA SM90 | Specialized H3 configuration and operator integration | Other NVIDIA architectures or all precision modes |
 | Moore Threads S5000 | Separate vendor-stack H3 end-to-end and raw-QKV Sage validation | Stock compiler compatibility or unchanged output quality; ported artifacts must be matched to commits |
-| Kunlun P800 | Native plugin 5544a76 + isolated communication shim: 8-card BF16 Flash H3, 352×640, 22 frames, one step | Production quality/performance, the newly packaged shim, or INT8 Sage acceptance |
+| Kunlun P800 | Packaged plugin 5d34048 launcher: 8-card BF16 Flash H3, 352×640, 22 frames, one step | Production quality/performance, INT8 Sage, fullgraph or other vendor stacks |
 | Other FlagGems platforms | Common plugin interfaces | H3, fused operators, Flash or multi-card readiness |
 
 The P800 baseline used Xtorch 2.9, vendor FlashAttention
@@ -170,7 +170,8 @@ because a package is installed:
 Merge these fields into the vendor host's complete H3 config, then use the H3
 launcher **without** `--enable-fusions`. The generic RMS path reuses FlagGems or
 the torch reference; revalidate H3 rounding/accuracy before comparing final
-quality. This route has adapter contract tests, not a new full-model GPU result.
+quality. This route has adapter contract tests and the bounded P800 full-model result below;
+other platforms still require their own full-model validation.
 For packed inputs the existing per-sequence adapter retains isolation, but is
 not fullgraph-safe. No automatic SDPA fallback is included in this example.
 
@@ -200,17 +201,21 @@ and restores their original configuration afterwards.
 
 ## P800 eight-card correctness baseline
 
-The public native path at plugin `5544a76` / FlagOmni `431a7e6` passed an
+The packaged launcher at plugin `5d340488e17231bf9b8967e8d05b11b0c881a9c0` /
+FlagOmni `431a7e6fcb9251fd7b44cdcb665839f4771b425f` passed an
 8-card full-checkpoint H3 run: 352×640, 22 frames, one step, seed 42, fixed verified
-conditioning. All ranks completed; each used 52 vendor Flash and 210 FlagGems RMS
+conditioning. All ranks completed; each used 52 vendor Flash, 210 FlagGems RMS and 200 all-to-all
 calls, with plugin SDPA forbidden. Main head-0 relative L2 errors versus CPU FP64
-were 0.0270%–0.1833%; text attention 0.1629%. Peak torch allocation was about
+were 0.0322%–0.1794%. Peak torch allocation was about
 67.56 GiB per rank. This is functional/finite-output validation, not a multi-step
-quality or production-throughput result. The audited 6.009 s pipeline time includes
-CPU references and forced synchronization and is not a performance benchmark.
+quality or production-throughput result. All Flash outputs were finite, and the
+output decoded to 22 frames at 640×352 with an audio stream. Numerical audits
+include CPU copies/references; timing is not a performance benchmark.
 
-That run used a launcher shim. Its safe, explicit conditions are now packaged in
-`examples/minimax_h3_p800.py`: set the vendor event/compiler options before imports,
+The run used `examples/minimax_h3_p800.py` itself, independently installed with
+`--no-deps --no-build-isolation --target`. An external observer counted calls and
+checked outputs but did not bind devices or add collective synchronization.
+The launcher owns the conditions: set the vendor event/compiler options before imports,
 bind `LOCAL_RANK` before process-group creation, use native CCL, and synchronize
 following each `all_to_all_single`. The latter is scoped to this exclusive process,
 restored on exit, and rejects asynchronous requests before submitting them. It is
@@ -224,6 +229,43 @@ an ordering/stream interaction, not a proven precise vendor defect. Synchronizin
 serializes overlap, so this is a correctness baseline with potential performance
 cost, not a recommended fast production policy. Revalidate before removing it or
 changing driver/CCL versions.
+
+### P800 dependency selection (do not replace vendor FlagGems)
+
+The passing run used the image's **vendor FlagGems 5.4.0rc2.post1**, not the generic
+source pin in `requirements-h3-operators.txt`. On P800, do **not** install that
+entire requirements file over this image. Retain vendor PyTorch and FlagGems;
+install only the selected plugin and FlagOmni revisions with `--no-deps`.
+The tested FlagTree overlay was `0.7.1+xpu3.6`; the base image still contains
+0.7.0rc2+xpu3.6. Put the overlay ahead of base site-packages, or use an isolated
+virtual environment with the same vendor dependencies. Do not infer package
+selection from `pip list` alone when both distributions are present.
+
+Recorded dependency versions: vendor PyTorch `2.9.0+cu129` (Xtorch, despite the
+CUDA suffix), FlashAttention `2.4.2+d2a78a4`, NumPy `1.26.4`, einops `0.8.1`,
+safetensors `0.8.0`, transformers `5.5.3`, diffusers `0.38.0`, ImageIO `2.37.3`,
+imageio-ffmpeg `0.6.0`, PyAV `16.1.0`. PyAV was an isolated media overlay. Use the
+image's other runtime dependencies; these versions are a tested environment,
+not a claim that arbitrary combinations work.
+
+```bash
+# In the P800 image above; run from the checked-out plugin.
+# Obtain the approved vendor FlagTree wheel from its distribution channel.
+python -m pip install --no-deps --target /opt/h3-flagtree 'flagtree===0.7.1+xpu3.6'
+python -m pip install --no-deps --target /opt/h3-media 'av==16.1.0'
+python -m pip install --no-deps --no-build-isolation --target /opt/h3-plugin .
+python -m pip install --no-deps --no-build-isolation --target /opt/h3-omni \
+  'flag-omni @ git+https://github.com/flagos-ai/FlagOmni.git@431a7e6fcb9251fd7b44cdcb665839f4771b425f'
+# HOST_DIR is the prepared LightX2V checkout at c58c16d607c49bf6021fecc6238ed177752d7e87.
+export PYTHONPATH="/opt/h3-plugin:/opt/h3-media:/opt/h3-flagtree:/opt/h3-omni:$HOST_DIR"
+export TRITON_CACHE_DIR=/tmp/h3-p800-triton-cache
+```
+
+The compiler install command requires an available wheel for Python 3.10/x86-64;
+use the verified vendor wheel path if it is not on the configured index. No
+registry credentials or model/conditioning artifacts are bundled. `MODEL_DIR`
+is the complete verified `MiniMax/MiniMax-H3` checkpoint (27 files in this run),
+not only DiT shards. Preserve the host's matching dependencies and model license.
 
 Generate the bounded SP8 config from the supplied single-card config:
 
@@ -242,7 +284,8 @@ torchrun --standalone --nproc-per-node=8 examples/minimax_h3_p800.py \
   --prompt "$PROMPT" --seed 42 --output /outputs/h3-p800-sp8.mp4
 ```
 
-Install the matching host/media dependencies first as above. The published wrapper
-has CPU contract tests; reproducing the prior shim's passing GPU run with this exact
-packaged wrapper is a separate check. Do not equate the result with Sage, fullgraph,
-full-resolution quality, other vendor images or other platforms.
+Install the matching host/media dependencies first as above. This exact packaged
+wrapper passed the bounded GPU run; subsequent documentation-only revisions do
+not change its execution code. Sage tuning remains paused and P800 INT8 Sage is
+not accepted. Do not equate this result with Sage, fullgraph, full-resolution
+quality, other vendor images or other platforms.
