@@ -221,3 +221,98 @@ def test_layer_norm_runtime_error_does_not_fallback(callers, monkeypatch):
     with pytest.raises(RuntimeError, match="layer norm failed"):
         layer.apply(torch.randn(2, 8))
     assert calls == ["gems"]
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("layout", ["packed", "dense", "dense_prefix"])
+def test_attention_batch_isolation(callers, dtype, layout):
+    import os
+
+    _, _, attn = callers
+    device = os.environ.get("ATTENTION_TEST_DEVICE", "cpu")
+    torch.manual_seed(17)
+    # Independent CPU FP64 reference, not the backend under test.
+    q, k, v = [torch.randn(n, 2, 8).to(dtype) for n in (6, 8, 8)]
+    qlens, klens = ([2, 4], [5, 3]) if layout == "packed" else ([3, 3], [4, 4])
+    refs = []
+    a = b = 0
+    for nq, nk in zip(qlens, klens):
+        qq, kk, vv = [
+            x.double().permute(1, 0, 2)
+            for x in (q[a : a + nq], k[b : b + nk], v[b : b + nk])
+        ]
+        refs.append(
+            ((qq @ kk.transpose(-1, -2) / 8**0.5).softmax(-1) @ vv)
+            .permute(1, 0, 2)
+            .reshape(nq, 16)
+        )
+        a += nq
+        b += nk
+    inputs = [x.to(device) for x in (q, k, v)]
+    if layout != "packed":
+        inputs = [x.reshape(2, -1, 2, 8) for x in inputs]
+    params = (
+        {}
+        if layout == "dense"
+        else {
+            "cu_seqlens_q": torch.tensor([0, qlens[0], 6], device=device),
+            "cu_seqlens_kv": torch.tensor([0, klens[0], 8], device=device),
+        }
+    )
+    weight = attn.FlagOSFlashAttnWeight()
+    out = weight.apply(*inputs, **params)
+    torch.testing.assert_close(
+        out.cpu().double(),
+        torch.cat(refs),
+        atol=0.02 if dtype == torch.bfloat16 else 0.002,
+        rtol=0.02 if dtype == torch.bfloat16 else 0.002,
+    )
+    changed = inputs[2].clone()
+    if layout == "packed":
+        changed[klens[0] :] += 100
+    else:
+        changed[1] += 100
+    out2 = weight.apply(inputs[0], inputs[1], changed, **params)
+    torch.testing.assert_close(out[: qlens[0]], out2[: qlens[0]], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("prefix", [[1, 2, 4], [0, 3, 2, 4], [0, 2, 3]])
+def test_attention_invalid_prefix(callers, prefix):
+    _, _, attn = callers
+    x = torch.zeros(4, 1, 8)
+    with pytest.raises(ValueError):
+        attn.FlagOSFlashAttnWeight().apply(x, x, x, cu_seqlens_q=torch.tensor(prefix))
+
+
+def test_attention_empty_sequences(callers):
+    _, _, attn = callers
+    x = torch.zeros(2, 1, 8)
+    out = attn.FlagOSFlashAttnWeight().apply(
+        x,
+        x,
+        x,
+        cu_seqlens_q=torch.tensor([0, 0, 2]),
+        cu_seqlens_kv=torch.tensor([0, 2, 2]),
+    )
+    assert out.shape == (2, 8) and torch.count_nonzero(out) == 0
+
+
+def test_attention_noncontiguous_singleton_and_empty(callers):
+    _, _, attn = callers
+    weight = attn.FlagOSFlashAttnWeight()
+    q, k, v = [torch.randn(5, 2, 16)[..., ::2] for _ in range(3)]
+    plain = weight.apply(q, k, v)
+    prefixed = weight.apply(q, k, v, cu_seqlens_q=torch.tensor([0, 5]))
+    torch.testing.assert_close(plain, prefixed)
+    empty = weight.apply(q[:0], k[:0], v[:0], cu_seqlens_q=torch.tensor([0, 0]))
+    assert empty.shape == (0, 16)
+
+
+def test_attention_reject_cross_batch_prefix_and_unpaired_kv(callers):
+    _, _, attn = callers
+    weight = attn.FlagOSFlashAttnWeight()
+    q = torch.zeros(2, 3, 1, 8)
+    with pytest.raises(ValueError, match="dense batch boundaries"):
+        weight.apply(q, q, q, cu_seqlens_q=torch.tensor([0, 2, 6]))
+    with pytest.raises(ValueError, match="requires"):
+        weight.apply(q, q, q, cu_seqlens_kv=torch.tensor([0, 3, 6]))

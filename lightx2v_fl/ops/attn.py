@@ -7,6 +7,8 @@ Layout follows the WAN varlen convention used across lightx2v_platform:
 
 from __future__ import annotations
 
+import itertools
+
 import torch
 import torch.nn.functional as F
 from lightx2v.utils.registry_factory import ATTN_WEIGHT_REGISTER
@@ -55,33 +57,80 @@ class FlagOSFlashAttnWeight(AttnWeightTemplate):
         max_seqlen_kv=None,
         **kwargs,
     ):
-        if q.ndim == 4:
-            bs = q.shape[0]
-            q = q.reshape(-1, q.shape[-2], q.shape[-1])
-            k = k.reshape(-1, k.shape[-2], k.shape[-1])
-            v = v.reshape(-1, v.shape[-2], v.shape[-1])
-        else:
-            bs = 1
+        if q.ndim not in (3, 4) or k.ndim != q.ndim or v.ndim != q.ndim:
+            raise ValueError("Q/K/V must share a 3D packed or 4D batched layout")
+        if k.shape[:-1] != v.shape[:-1] or q.shape[-1] != k.shape[-1]:
+            raise ValueError("Incompatible Q/K/V shapes")
+        if q.shape[-2] != k.shape[-2]:
+            raise ValueError("Q/K/V must have matching head counts")
+        width = q.shape[-2] * v.shape[-1]
+        if q.ndim == 4 and (q.shape[0] != k.shape[0]):
+            raise ValueError("Q/K/V must have matching batch sizes")
+        if cu_seqlens_q is None:
+            if cu_seqlens_kv is not None:
+                raise ValueError("cu_seqlens_kv requires cu_seqlens_q")
+            # Preserve the batch dimension, including unequal Q and KV lengths.
+            inputs = (
+                (q, k, v) if q.ndim == 4 else tuple(x.unsqueeze(0) for x in (q, k, v))
+            )
+            return _sdp(*inputs, self.config).reshape(-1, width)
 
-        total_q = q.shape[0]
-
-        # Fast path: single sequence.
-        if cu_seqlens_q is None or bs == 1:
-            x = _sdp(q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0), self.config)
-            return x.squeeze(0).reshape(total_q, -1)
-
-        # Varlen path: one call per sequence (handles differing Q / KV lengths).
-        outputs = []
-        batch_size = cu_seqlens_q.shape[0] - 1
+        batch_shape = (q.shape[:2], k.shape[:2]) if q.ndim == 4 else None
+        q, k, v = (x.reshape(-1, x.shape[-2], x.shape[-1]) for x in (q, k, v))
         ckv = cu_seqlens_kv if cu_seqlens_kv is not None else cu_seqlens_q
-        for i in range(batch_size):
-            qs, qe = int(cu_seqlens_q[i]), int(cu_seqlens_q[i + 1])
-            ks, ke = int(ckv[i]), int(ckv[i + 1])
+
+        def boundaries(prefix, total, maximum, name):
+            if (
+                prefix.ndim != 1
+                or prefix.numel() < 2
+                or prefix.dtype not in (torch.int32, torch.int64)
+            ):
+                raise ValueError(
+                    f"{name} must be a 1D integer cumulative-length tensor"
+                )
+            # This eager varlen fallback already needs host slicing. Copy once,
+            # rather than synchronizing for every boundary. Not graph-safe.
+            points = prefix.tolist()
+            lengths = [b - a for a, b in itertools.pairwise(points)]
+            if points[0] != 0 or points[-1] != total or any(n < 0 for n in lengths):
+                raise ValueError(
+                    f"{name} must monotonically cover all tokens from zero"
+                )
+            if maximum is not None and max(lengths) > maximum:
+                raise ValueError(f"{name} exceeds max_seqlen")
+            return points
+
+        cq = boundaries(cu_seqlens_q, q.shape[0], max_seqlen_q, "cu_seqlens_q")
+        ck = boundaries(ckv, k.shape[0], max_seqlen_kv, "cu_seqlens_kv")
+        if len(cq) != len(ck):
+            raise ValueError("Q and KV must describe the same number of sequences")
+        if batch_shape is not None:
+            # A dense batch must not be repartitioned across physical rows.
+            for points, (batch, length) in zip((cq, ck), batch_shape):
+                if points != [i * length for i in range(batch + 1)]:
+                    raise ValueError(
+                        "4D cumulative lengths must match dense batch boundaries"
+                    )
+            return _sdp(
+                q.reshape(*batch_shape[0], *q.shape[-2:]),
+                k.reshape(*batch_shape[1], *k.shape[-2:]),
+                v.reshape(*batch_shape[1], *v.shape[-2:]),
+                self.config,
+            ).reshape(-1, width)
+
+        outputs = []
+        for qs, qe, ks, ke in zip(cq, cq[1:], ck, ck[1:]):
+            if qs == qe:
+                continue
+            if ks == ke:
+                # SDPA's empty-key result is zero; avoid backend-dependent kernels.
+                outputs.append(v.new_zeros((qe - qs, width)))
+                continue
             xi = _sdp(
                 q[qs:qe].unsqueeze(0),
                 k[ks:ke].unsqueeze(0),
                 v[ks:ke].unsqueeze(0),
                 self.config,
             )
-            outputs.append(xi.squeeze(0).reshape(qe - qs, -1))
-        return torch.cat(outputs, dim=0)
+            outputs.append(xi.reshape(qe - qs, width))
+        return torch.cat(outputs, dim=0) if outputs else v.new_empty((0, width))
