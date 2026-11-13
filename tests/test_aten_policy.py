@@ -225,7 +225,7 @@ def test_common_defaults_merge_and_can_be_replaced(policy, monkeypatch):
             "models": {"wan": {"*": ["add"], "kunlunxin": ["mm", "linear"]}},
         },
     )
-    base = dict(vendor_name="kunlunxin", model_name="wan")
+    base = {"vendor_name": "kunlunxin", "model_name": "wan"}
     assert policy.get_global_gems_lists(
         **base, environ={"LIGHTX2V_FL_GEMS_BLACKLIST_APPEND": "zero,extra"}
     ) == (
