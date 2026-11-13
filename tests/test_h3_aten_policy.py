@@ -26,6 +26,7 @@ def test_h3_nvidia_policy_is_scoped_and_fresh():
         "copy",
         "copy_",
         "zero",
+        "zero_",
         "is_same_size",
         "mm",
         "mm_out",
@@ -49,10 +50,10 @@ def test_h3_nvidia_policy_is_scoped_and_fresh():
     )
     assert get_global_gems_lists(
         vendor_name="mthreads", model_name="minimax_h3", environ={}
-    ) == (None, ["copy", "copy_", "zero", "is_same_size"])
+    ) == (None, ["copy", "copy_", "zero", "zero_", "is_same_size"])
     assert get_global_gems_lists(
         vendor_name="nvidia", model_name="unrelated", environ={}
-    ) == (None, ["copy", "copy_", "zero", "is_same_size"])
+    ) == (None, ["copy", "copy_", "zero", "zero_", "is_same_size"])
 
 
 def test_user_modes_still_override_h3_defaults():

@@ -4,6 +4,7 @@
             "copy",
             "copy_",
             "zero",
+            "zero_",
             "is_same_size"
         ]
     },

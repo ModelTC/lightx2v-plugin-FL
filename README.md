@@ -99,7 +99,7 @@ LIGHTX2V_FL_GLOBAL_GEMS=1 PLATFORM=flagos python lightx2v/infer.py ...
 
 ### Global ATen selection rules
 
-The default exclusions on every platform are `copy`, `copy_`, `zero`, and
+The default exclusions on every platform are `copy`, `copy_`, `zero`, `zero_`, and
 `is_same_size`. These are FlagGems implementation names; `zero_` is a separate
 in-place operator and is not an alias for `zero`.
 

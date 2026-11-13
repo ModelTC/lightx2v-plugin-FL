@@ -96,7 +96,7 @@ def test_shipped_default_exclusions(monkeypatch, vendor):
 
     assert get_global_gems_lists(vendor_name=vendor, model_name="wan", environ={}) == (
         None,
-        ["copy", "copy_", "zero", "is_same_size"],
+        ["copy", "copy_", "zero", "zero_", "is_same_size"],
     )
 
 
@@ -114,7 +114,10 @@ def enable(monkeypatch):
 @pytest.mark.parametrize(
     "values, expected",
     [
-        ({}, ("enable", {"unused": ["copy", "copy_", "zero", "is_same_size"]})),
+        (
+            {},
+            ("enable", {"unused": ["copy", "copy_", "zero", "zero_", "is_same_size"]}),
+        ),
         ({"UNUSED": " add,mm "}, ("enable", {"unused": ["add", "mm"]})),
         ({"WHITELIST": "softmax"}, ("only_enable", {"include": ["softmax"]})),
         ({"BLACKLIST": " , "}, ("enable", {"unused": []})),
@@ -153,7 +156,7 @@ def test_registration_failure_is_not_cached(enable, monkeypatch):
     assert not enable._ENABLED
     gems.enable = lambda **kw: calls.append(kw)
     enable.enable_global_flaggems()
-    assert calls == [{"unused": ["copy", "copy_", "zero", "is_same_size"]}] * 2
+    assert calls == [{"unused": ["copy", "copy_", "zero", "zero_", "is_same_size"]}] * 2
 
 
 def test_missing_whitelist_api_never_enables_everything(enable, monkeypatch):
@@ -219,7 +222,7 @@ def test_common_defaults_merge_and_can_be_replaced(policy, monkeypatch):
         "_read_defaults",
         lambda: {
             "platforms": {
-                "*": ["copy", "copy_", "zero", "is_same_size"],
+                "*": ["copy", "copy_", "zero", "zero_", "is_same_size"],
                 "kunlunxin": ["copy_", "mm"],
             },
             "models": {"wan": {"*": ["add"], "kunlunxin": ["mm", "linear"]}},
@@ -230,7 +233,17 @@ def test_common_defaults_merge_and_can_be_replaced(policy, monkeypatch):
         **base, environ={"LIGHTX2V_FL_GEMS_BLACKLIST_APPEND": "zero,extra"}
     ) == (
         None,
-        ["copy", "copy_", "zero", "is_same_size", "mm", "add", "linear", "extra"],
+        [
+            "copy",
+            "copy_",
+            "zero",
+            "zero_",
+            "is_same_size",
+            "mm",
+            "add",
+            "linear",
+            "extra",
+        ],
     )
     assert policy.get_global_gems_lists(
         **base, environ={"LIGHTX2V_FL_GEMS_BLACKLIST": "custom"}
