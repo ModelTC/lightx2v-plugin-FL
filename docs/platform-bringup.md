@@ -58,6 +58,25 @@ against LightX2V `c58c16d607c49bf6021fecc6238ed177752d7e87`.
 Plugin registration must occur before the host takes registry snapshots; see
 [entry-point integration](upstream-entrypoint-hook.md).
 
+### Recorded P800 base image
+
+The isolated P800 baseline used this registry image (registry access required):
+
+```text
+harbor.baai.ac.cn/plugin/kunlunxin001-gems5.4.0-tree0.7.0rc2-triton3.6.0-cx0.13.0-plugin0.3.0-vllm0.24.0-cp310-pt29-x64-v5.0.21.47:202610110945
+```
+
+Verified repository digest:
+`sha256:1ed2c722cbbf091e7c36f342d2ade1e77f8258164139ce4caf618cbbbb9d3abb`.
+This identifies the **base image**, not a self-contained H3 release image.
+The run additionally installed the host, plugin/operator sources and Python
+media dependencies in an isolated environment. The base contains FlagTree
+0.7.0rc2/Triton 3.6/Python 3.10/vendor PyTorch 2.9/XRT 5.0.21.47;
+FlagTree 0.7.1+xpu3.6 was tested as a separate overlay. Do not overwrite the
+vendor stack or infer that the image's bundled FlagGems matches this PR's pin.
+Only authorized users should pull the image; credentials are not part of the
+recipe. Other platforms need their own matching vendor image, not this image.
+
 ## Start conservatively
 
 For a supported generic host model:
