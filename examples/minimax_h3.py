@@ -19,7 +19,6 @@ import hashlib
 import json
 import os
 import random
-from contextlib import nullcontext
 from pathlib import Path
 
 
@@ -48,7 +47,7 @@ def main():
     from lightx2v import LightX2VPipeline
 
     import lightx2v_fl  # noqa: F401 - register before host registry snapshots
-    from lightx2v_fl.models.minimax_h3 import H3InferenceContext
+    from lightx2v_fl.models.minimax_h3 import H3InferenceContext, H3OperatorPolicy
 
     config = json.loads(Path(args.config).read_text())
     if not config.get("attn_type") or not config.get("rms_type"):
@@ -120,7 +119,7 @@ def main():
         context = (
             H3InferenceContext(pipe.runner, vae_fusion=not args.no_vae_fusion)
             if args.enable_fusions
-            else nullcontext()
+            else H3OperatorPolicy(pipe.runner)
         )
         with context:
             pipe.generate(

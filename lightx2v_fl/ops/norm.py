@@ -31,6 +31,8 @@ def _layer_norm_ref(x, weight, bias, eps):
 
 @RMS_WEIGHT_REGISTER("flagos_rms_norm")
 class FlagOSRmsNormWeight(RMSWeightTemplate):
+    _fl_dispatch_operator = "rms_norm"
+
     def __init__(
         self,
         weight_name,

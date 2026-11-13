@@ -229,3 +229,37 @@ def test_scoped_data_binding_preserves_foreign_owner():
     with pytest.raises(RuntimeError, match="foreign replacements"):
         scope.restore()
     assert owner.config is foreign
+
+
+def test_native_policy_reaches_actual_packed_attention_and_restores(
+    callers, monkeypatch
+):
+    dispatch, _, attn = callers
+    module = importlib.import_module("lightx2v_fl.models.minimax_h3")
+    calls = []
+
+    def flash(q, k, v, **kwargs):
+        calls.append(tuple(q.shape))
+        return torch.nn.functional.scaled_dot_product_attention(
+            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+        ).transpose(1, 2)
+
+    monkeypatch.setitem(
+        sys.modules, "flash_attn", SimpleNamespace(flash_attn_func=flash)
+    )
+    weight = attn.FlagOSFlashAttnWeight()
+    original = weight.config
+    runner = SimpleNamespace(
+        model=SimpleNamespace(attention=weight),
+        config={"fl_dispatch": {"attention": {"order": ["flash_attn"]}}},
+    )
+    q = torch.randn(7, 2, 4)
+    prefix = torch.tensor([0, 3, 7])
+    with module.H3OperatorPolicy(runner):
+        out = weight.apply(q, q, q, cu_seqlens_q=prefix)
+        q2 = q.clone()
+        q2[3:] += 100
+        changed = weight.apply(q2, q2, q2, cu_seqlens_q=prefix)
+        torch.testing.assert_close(out[:3], changed[:3])
+    assert weight.config is original
+    assert calls == [(1, 3, 2, 4), (1, 4, 2, 4)] * 2

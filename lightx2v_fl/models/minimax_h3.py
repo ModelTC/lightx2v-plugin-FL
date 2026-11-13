@@ -58,6 +58,23 @@ def _owned_mm(model, cls):
     return {id(obj) for obj in _model_objects(model) if type(obj) is cls}
 
 
+class H3OperatorPolicy:
+    """Bind explicit runner policy without installing fusions or ATen patches."""
+
+    def __init__(self, runner):
+        self.bindings = ScopedAttributes()
+        for obj in _model_objects(runner.model):
+            if getattr(type(obj), "_fl_dispatch_operator", None) is not None:
+                self.bindings.add(obj, "config", ChainMap(obj.config, runner.config))
+
+    def __enter__(self):
+        self.bindings.install()
+        return self
+
+    def __exit__(self, *exc):
+        self.bindings.restore()
+
+
 class H3InferenceContext:
     """Exclusive process-owned ATen scope for one initialized H3 runner.
 
@@ -104,6 +121,8 @@ class H3InferenceContext:
             if getattr(type(obj), "_fl_dispatch_operator", None) in {
                 "sage_attention",
                 "h3_rms_norm",
+                "attention",
+                "rms_norm",
             }:
                 # Host attention factories construct these weights without a
                 # runner config. Preserve per-weight overrides and inherit the

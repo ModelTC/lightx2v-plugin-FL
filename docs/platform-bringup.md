@@ -155,3 +155,39 @@ the torch reference; revalidate H3 rounding/accuracy before comparing final
 quality. This route has adapter contract tests, not a new full-model GPU result.
 For packed inputs the existing per-sequence adapter retains isolation, but is
 not fullgraph-safe. No automatic SDPA fallback is included in this example.
+
+### Bounded BF16 launcher configuration
+
+`examples/minimax_h3_bf16.json` is the concrete one-step/22-frame/64×64 bring-up
+configuration, with native Flash explicitly selected and no ATen/fusion opt-in.
+It deliberately requires FlagGems RMS rather than silently selecting a different
+rounding path. Confirm the image supports the remaining host RoPE/FFN/VAE
+operations; this configuration is a test candidate until the target passes.
+
+```bash
+# Run from this plugin checkout, with the vendor host installed/importable.
+# MODEL_DIR contains the verified MiniMax/MiniMax-H3 checkpoint.
+# CONDITIONING_FILE and its SHA are for this exact PROMPT (see minimax-h3.md).
+PLATFORM=flagos LIGHTX2V_FL_GLOBAL_GEMS=0 LIGHTX2V_FL_DISABLE_FLAGCX=1 \
+python examples/minimax_h3.py --model-path "$MODEL_DIR" \
+  --config examples/minimax_h3_bf16.json --seed 42 --prompt "$PROMPT" \
+  --conditioning "$CONDITIONING_FILE" --conditioning-sha256 "$CONDITIONING_SHA256" \
+  --output /outputs/h3-bf16-smoke.mp4
+```
+
+The launcher imports `lightx2v_fl` before creating the pipeline, so this command
+activates plugin registries even without the optional upstream entry-point hook.
+It binds the runner dispatch policy to owned attention/RMS objects for inference
+and restores their original configuration afterwards.
+
+For SP8, the host config uses
+`"parallel": {"seq_p_size": 8, "seq_p_attn_type": "ulysses"}` and the launcher
+runs under `torchrun --standalone --nproc_per_node=8`. Do not launch it before
+single-card acceptance and communication/stream checks. On the tested P800
+stack, also set `XPU_EVENT_KL3_ENABLE=0` and
+`LIGHTX2V_FL_DISABLE_FLAGCX=1`. The earlier passing isolation added explicit
+synchronization after all-to-all; that host-side change is **not supplied by
+this PR**, so these environment variables alone are not a complete SP8 fix.
+Use the vendor/host implementation that provides the validated synchronization
+before attempting this step. The new public launcher has not inherited an
+8-card acceptance result merely by adopting the same Flash public function.

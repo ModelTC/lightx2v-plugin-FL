@@ -43,6 +43,8 @@ def _torch_sdp(q, k, v, **parameters):
 class FlagOSFlashAttnWeight(AttnWeightTemplate):
     """FlagOS attention. Registered as ``flagos_flash_attn``."""
 
+    _fl_dispatch_operator = "attention"
+
     def __init__(self):
         self.config = {}
 
