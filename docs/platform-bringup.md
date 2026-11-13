@@ -95,9 +95,8 @@ operations unchanged unless `--enable-fusions` is supplied. A new
 platform adapter must supply validated attention/RMS registry keys and matching
 host configuration before claiming H3 support. Do not merely change FP8 to BF16
 in that JSON. Initially omit `--enable-fusions` and keep
-unsupported FFN/rotary fusions on the host path. Vendor Flash adapters and scoped
-communication workarounds from isolated experiments must be ported and tested
-before they become a supported recipe in this repository.
+unsupported FFN/rotary fusions on the host path. The explicit native Flash adapter and opt-in P800 communication launcher are
+described below; their validation scope must be kept separate from Sage.
 
 Ordinary explicit dispatch policy is configurable independently of ATen patching:
 
@@ -120,7 +119,7 @@ Defaults exclude `copy`, `copy_`, `zero`, `zero_`, `is_same_size`. A user blackl
 |---|---|---|
 | NVIDIA SM90 | Specialized H3 configuration and operator integration | Other NVIDIA architectures or all precision modes |
 | Moore Threads S5000 | Separate vendor-stack H3 end-to-end and raw-QKV Sage validation | Stock compiler compatibility or unchanged output quality; ported artifacts must be matched to commits |
-| Kunlun P800 | Isolated 8-card BF16 vendor Flash H3 functional run, 352×640, 22 frames, one step | Production quality/performance, generic PR installation or INT8 Sage acceptance |
+| Kunlun P800 | Native plugin 5544a76 + isolated communication shim: 8-card BF16 Flash H3, 352×640, 22 frames, one step | Production quality/performance, the newly packaged shim, or INT8 Sage acceptance |
 | Other FlagGems platforms | Common plugin interfaces | H3, fused operators, Flash or multi-card readiness |
 
 The P800 baseline used Xtorch 2.9, vendor FlashAttention
@@ -199,14 +198,51 @@ activates plugin registries even without the optional upstream entry-point hook.
 It binds the runner dispatch policy to owned attention/RMS objects for inference
 and restores their original configuration afterwards.
 
-For SP8, the host config uses
-`"parallel": {"seq_p_size": 8, "seq_p_attn_type": "ulysses"}` and the launcher
-runs under `torchrun --standalone --nproc_per_node=8`. Do not launch it before
-single-card acceptance and communication/stream checks. On the tested P800
-stack, also set `XPU_EVENT_KL3_ENABLE=0` and
-`LIGHTX2V_FL_DISABLE_FLAGCX=1`. The earlier passing isolation added explicit
-synchronization after all-to-all; that host-side change is **not supplied by
-this PR**, so these environment variables alone are not a complete SP8 fix.
-Use the vendor/host implementation that provides the validated synchronization
-before attempting this step. The new public launcher has not inherited an
-8-card acceptance result merely by adopting the same Flash public function.
+## P800 eight-card correctness baseline
+
+The public native path at plugin `5544a76` / FlagOmni `431a7e6` passed an
+8-card full-checkpoint H3 run: 352×640, 22 frames, one step, seed 42, fixed verified
+conditioning. All ranks completed; each used 52 vendor Flash and 210 FlagGems RMS
+calls, with plugin SDPA forbidden. Main head-0 relative L2 errors versus CPU FP64
+were 0.0270%–0.1833%; text attention 0.1629%. Peak torch allocation was about
+67.56 GiB per rank. This is functional/finite-output validation, not a multi-step
+quality or production-throughput result. The audited 6.009 s pipeline time includes
+CPU references and forced synchronization and is not a performance benchmark.
+
+That run used a launcher shim. Its safe, explicit conditions are now packaged in
+`examples/minimax_h3_p800.py`: set the vendor event/compiler options before imports,
+bind `LOCAL_RANK` before process-group creation, use native CCL, and synchronize
+following each `all_to_all_single`. The latter is scoped to this exclusive process,
+restored on exit, and rejects asynchronous requests before submitting them. It is
+never activated on another vendor or by the ordinary launcher. Environment values
+conflicting with the tested recipe fail clearly instead of being overwritten.
+
+Why synchronize? Standalone small collectives passed, but repeated real
+compute/communication stalled on this vendor stack. The tested combination of
+KL3 events disabled and synchronized native collectives completed. This supports
+an ordering/stream interaction, not a proven precise vendor defect. Synchronizing
+serializes overlap, so this is a correctness baseline with potential performance
+cost, not a recommended fast production policy. Revalidate before removing it or
+changing driver/CCL versions.
+
+Generate the bounded SP8 config from the supplied single-card config:
+
+```bash
+python - <<'PYCODE'
+import json
+p = json.load(open("examples/minimax_h3_bf16.json"))
+p.update(size=[352, 640], num_frames=22, infer_steps=1)
+p["parallel"] = {"seq_p_size": 8, "seq_p_attn_type": "ulysses"}
+json.dump(p, open("/tmp/h3-bf16-sp8.json", "w"), indent=2)
+PYCODE
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+torchrun --standalone --nproc-per-node=8 examples/minimax_h3_p800.py \
+  --model-path "$MODEL_DIR" --config /tmp/h3-bf16-sp8.json \
+  --conditioning "$CONDITIONING_FILE" --conditioning-sha256 "$CONDITIONING_SHA256" \
+  --prompt "$PROMPT" --seed 42 --output /outputs/h3-p800-sp8.mp4
+```
+
+Install the matching host/media dependencies first as above. The published wrapper
+has CPU contract tests; reproducing the prior shim's passing GPU run with this exact
+packaged wrapper is a separate check. Do not equate the result with Sage, fullgraph,
+full-resolution quality, other vendor images or other platforms.

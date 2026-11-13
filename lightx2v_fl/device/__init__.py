@@ -101,14 +101,15 @@ class FlagOSDevice:
         dev = _detect_torch_device()
         rank = int(os.environ.get("RANK", "0"))
 
+        # Distributed libraries may create streams during initialization.
+        # LOCAL_RANK, not global rank modulo device count, owns this device.
+        mod = getattr(torch, dev, None)
+        if mod is not None and hasattr(mod, "set_device"):
+            mod.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+
         backend = _select_dist_backend(dev)
         logger.info(f"[lightx2v-fl] init_process_group(backend='{backend}', rank={rank}).")
         dist.init_process_group(backend=backend)
-
-        # Pin this rank to its device.
-        mod = getattr(torch, dev, None)
-        if mod is not None and hasattr(mod, "set_device"):
-            mod.set_device(rank % mod.device_count())
 
 
 def _select_dist_backend(dev: str) -> str:
