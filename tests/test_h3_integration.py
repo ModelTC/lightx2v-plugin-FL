@@ -48,7 +48,7 @@ def test_sage_dense_abi_and_explicit_precision(callers, monkeypatch):
         return v
 
     monkeypatch.setattr(
-        dispatch.backends, "load_flaggems", lambda: SimpleNamespace(sage_attention=sage)
+        dispatch.backends, "load_flagomni", lambda: SimpleNamespace(sage_attention=sage)
     )
     weight = load_op("sage_attn", monkeypatch).FlagOSSageAttnWeight()
     weight.config = {
@@ -85,8 +85,8 @@ def test_specialized_execution_error_is_not_retried(callers, monkeypatch):
 
     monkeypatch.setattr(
         dispatch.backends,
-        "load_lightx2v_gems",
-        lambda: SimpleNamespace(h3_swiglu=broken),
+        "load_flagomni",
+        lambda: SimpleNamespace(packed_swiglu=broken),
     )
     with pytest.raises(RuntimeError, match="kernel failure"):
         dispatch.dispatch_op(

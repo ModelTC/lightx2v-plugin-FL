@@ -4,14 +4,16 @@ This model-specific integration depends on the independent global ATen policy
 and explicit operator dispatch changes in PRs #6 and #7. Those PRs contain no
 H3 adaptation. The H3 changes, config and lifecycle are maintained here.
 
-Numerical code is in `flaggems_lightx2v` (H3-specific contracts) and `flag_gems`
-(generic SageAttention, metadata and GEMM). The plugin calls public APIs. It does
+Numerical code is in `flag_omni.lightx2v` (operation-named fusion and SageAttention APIs)
+and `flag_gems` (generic ATen, metadata and GEMM). H3 policy names map to
+FlagOmni APIs in `lightx2v_fl/models/h3_operators.py`; model adaptation belongs
+only in this plugin, not FlagOmni. The plugin calls public APIs. It does
 not load experimental source paths or patch installed numerical dependencies.
 
 ## Install and run
 
 Install the device-matched PyTorch and compiler first, then the reviewed/pinned
-FlagGems and FlagGems-lightx2v revisions. Install this plugin with `pip install
+FlagGems and FlagOmni revisions. Install this plugin with `pip install
 --no-deps .`. The public operator dependencies are pinned in
 `requirements-h3-operators.txt`. Install them with `python -m pip install
 --no-deps -r requirements-h3-operators.txt` after preparing the vendor stack.
@@ -54,3 +56,8 @@ H3 multi-card configurations use Ulysses **sequence** parallelism (not tensor
 parallelism). Configure the upstream `parallel.seq_p_size`, `seq_p_attn_type`
 and collective backend only after bounded communication tests. Keep VAE
 parallelism, offload, seed, frames, steps and timing boundaries explicit.
+
+The default H3 and Sage backend is `flagomni`. The historical policy key
+`lightx2v_gems` remains an alias for this backend, not a dependency on the old
+package. The shipped SM90 example explicitly selects `flagomni` for both Sage
+and RMS. This wiring revision has CPU/ABI tests but no new full-model GPU result.

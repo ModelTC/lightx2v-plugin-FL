@@ -28,7 +28,7 @@ OPERATORS = {
     "h3_reference_blend": frozenset(),
     "h3_rotary_tables": frozenset({"freq_dim", "theta"}),
 }
-BACKENDS = {"flaggems", "lightx2v_gems", "torch"}
+BACKENDS = {"flaggems", "flagomni", "lightx2v_gems", "torch"}
 
 
 @lru_cache(maxsize=1)
@@ -58,9 +58,9 @@ def resolve_policy(op_name, *, config=None, vendor_name="unknown"):
         raise ValueError(f"Unknown fl_dispatch operators: {sorted(unknown)}")
     policy = {"order": ["flaggems", "torch"], "parameters": {}}
     if op_name.startswith("h3_"):
-        policy["order"] = ["lightx2v_gems"]
+        policy["order"] = ["flagomni"]
     elif op_name == "sage_attention":
-        policy["order"] = ["flaggems"]
+        policy["order"] = ["flagomni"]
     for layer in (
         defaults["platforms"].get(vendor_name, {}),
         model.get("*", {}),

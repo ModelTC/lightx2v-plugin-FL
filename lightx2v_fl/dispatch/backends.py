@@ -1,4 +1,4 @@
-"""Pre-execution adapters to public FlagGems APIs; no numerical kernels."""
+"""Pre-execution adapters to public FlagGems and FlagOmni APIs; no numerical kernels."""
 
 from __future__ import annotations
 
@@ -39,19 +39,32 @@ def _signature(fn):
 
 
 @lru_cache(maxsize=1)
-def load_lightx2v_gems():
+def load_flagomni():
     try:
-        import flaggems_lightx2v
-    except ImportError:
+        from flag_omni import lightx2v
+    except ModuleNotFoundError as exc:
+        # Missing optional package permits pre-execution selection only. A
+        # broken installed dependency must not silently select another backend.
+        if exc.name not in ("flag_omni", "flag_omni.lightx2v"):
+            raise
         return None
-    return flaggems_lightx2v
+    return lightx2v
 
 
-def lightx2v_call(op_name, args, kwargs):
-    library = load_lightx2v_gems()
-    if library is None or not op_name.startswith("h3_"):
+def flagomni_call(op_name, args, kwargs):
+    from lightx2v_fl.models.h3_operators import H3_OPERATOR_APIS
+
+    public_name = (
+        "sage_attention"
+        if op_name == "sage_attention"
+        else H3_OPERATOR_APIS.get(op_name)
+    )
+    if public_name is None:
         return None
-    return bind_call(getattr(library, op_name, None), args, kwargs)
+    library = load_flagomni()
+    if library is None:
+        return None
+    return bind_call(getattr(library, public_name, None), args, kwargs)
 
 
 def flaggems_call(gems, op_name, args, kwargs):

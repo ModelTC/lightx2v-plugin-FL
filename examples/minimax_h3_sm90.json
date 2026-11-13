@@ -22,11 +22,11 @@
   "vae_spatial_scale_factor": 16,
   "fl_dispatch": {
     "sage_attention": {
-      "order": ["flaggems"],
+      "order": ["flagomni"],
       "parameters": {"pv_dtype": "fp8", "implementation": "sm90"}
     },
     "h3_rms_norm": {
-      "order": ["lightx2v_gems"],
+      "order": ["flagomni"],
       "parameters": {"tier": "sm90"}
     }
   }
