@@ -45,7 +45,7 @@ def test_actual_flagomni_api_binding_and_cpu_rejection(callers, monkeypatch):
         library = importlib.import_module("flag_omni.lightx2v")
     except ModuleNotFoundError as error:
         if error.name == "flag_omni":
-            pytest.skip("Install requirements-h3-operators.txt for cross-repo ABI test")
+            pytest.skip("Install the platform-matched shared FlagOmni dependency for cross-repo ABI test")
         raise
     from lightx2v_fl.models.h3_operators import H3_OPERATOR_APIS
 

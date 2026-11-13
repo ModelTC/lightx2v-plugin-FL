@@ -13,10 +13,11 @@ not load experimental source paths or patch installed numerical dependencies.
 ## Install and run
 
 Install the device-matched PyTorch and compiler first, then the reviewed/pinned
-FlagGems and FlagOmni revisions. Install this plugin with `pip install
---no-deps .`. The public operator dependencies are pinned in
-`requirements-h3-operators.txt`. Install them with `python -m pip install
---no-deps -r requirements-h3-operators.txt` after preparing the vendor stack.
+FlagGems and FlagOmni distributions. These are plugin-level dependencies declared
+in `pyproject.toml`, shared by all model integrations. Install this plugin with
+`python -m pip install --no-deps .` in the prepared vendor environment and check
+`python -m pip check`; do not replace vendor operator packages with a generic
+source pin.
 
 `examples/minimax_h3_sm90.json` is a single-H100, fully resident, fixed-conditioning
 configuration. Set its AdaLN cache directory to a cache generated with the same
@@ -71,5 +72,5 @@ FlagOmni fusions just to test a new platform. `--enable-fusions` opts into the
 scoped H3 fusion integration; `--no-vae-fusion` narrows that opt-in further.
 This is pre-execution selection, not recovery from an execution failure.
 Explicit `flagos_h3_rms_norm`/Sage keys still call their selected libraries.
-Do not use the SM90 JSON unchanged on another device. See
-[platform bring-up](platform-bringup.md) for capability and validation checks.
+Do not use the SM90 JSON unchanged on another device. Validate the selected
+operator contracts and communication path before increasing workload size.

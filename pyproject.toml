@@ -10,12 +10,11 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 
-# NOTE: lightx2v / flag_gems / flagcx are intentionally NOT hard runtime deps.
-#   - lightx2v is the host framework; the plugin is meant to be installed alongside it.
-#   - flag_gems / flagcx are vendor-specific builds (per-chip wheels), so the user
-#     installs the right one for their hardware. The plugin degrades gracefully
-#     (falls back to torch reference) when they are absent.
-dependencies = []
+# Shared across model integrations. Install vendor-matched distributions first.
+# No generic torch/compiler dependency: accelerator images own those binaries.
+# Unversioned names recognize installed vendor distributions without forcing a
+# replacement by an unrelated public wheel. Use --no-deps in prepared images.
+dependencies = ["loguru", "flag_gems", "flag-omni"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

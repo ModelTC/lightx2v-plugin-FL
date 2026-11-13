@@ -1,5 +1,0 @@
-# Install vendor-matched torch/compiler first. Use pip install --no-deps -r this file.
-# Draft review revisions; not a validated production release.
-# Official upstream base of the former Sage fork; Sage/H3 operators live in FlagOmni.
-flag_gems @ git+https://github.com/flagos-ai/FlagGems.git@a4e2556d572fc8dfbd38bb28764faae29c51d035
-flag-omni @ git+https://github.com/flagos-ai/FlagOmni.git@431a7e6fcb9251fd7b44cdcb665839f4771b425f

@@ -19,8 +19,8 @@ kernel set. That is N adaptations for N chips.
 `flagos` is one `PLATFORM=flagos` integration that delegates compute to FlagGems
 and communication to FlagCX or the vendor runtime. Each model, specialized
 fusion and communication path still needs validation on the target platform.
-See the [platform engineer bring-up guide](docs/platform-bringup.md) for dependency
-preparation, capability selection, launch commands and acceptance checks.
+Install the matching vendor runtime and operator distributions before enabling
+a model-specific integration.
 
 ```
             ┌──────────────────────────────────────────────┐
@@ -42,21 +42,24 @@ preparation, capability selection, launch commands and acceptance checks.
 
 ## Install
 
+The plugin declares shared `loguru`, `flag_gems` and `flag-omni` dependencies in
+`pyproject.toml`; these are used across model integrations, not an H3-only extra.
+Install the platform-matched distributions first. Vendor PyTorch, FlagTree/Triton,
+the LightX2V host and optional FlagCX remain platform/environment dependencies.
+Do not replace an accelerator image's vendor packages with generic CUDA wheels.
+
 ```bash
-# 1. the plugin (this repo)
-pip install -e .
-
-# 2. FlagGems for your chip (example: NVIDIA)
-pip install "flag_gems[nvidia]"      # or [ascend], [cambricon], ...
-
-# 3. (optional, multi-card) FlagCX torch plugin for your chip
-#    see https://github.com/FlagOpen/FlagCX
+# Inside a prepared vendor environment with the shared dependencies installed:
+python -m pip install --no-deps -e .
+python -m pip check
 ```
 
-`flag_gems` and `flagcx` are **not** hard dependencies — the plugin degrades to
-torch reference implementations for supported generic operations when absent.
-The host framework and its dependencies are required; H3-specific FlagOmni
-operators have no automatic torch fallback.
+No universal package version is imposed: a platform maintainer must choose and
+validate its matching operator builds. In particular, the validated P800 image
+uses vendor FlagGems 5.4.0rc2.post1; preserve that distribution. `--no-deps` avoids
+resolver-driven replacement but requires checking dependencies yourself.
+Generic operators can select an existing torch reference before execution;
+this is not a promise of full-model support or a fallback after a kernel error.
 
 ## Use
 
