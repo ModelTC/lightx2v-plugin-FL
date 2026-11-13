@@ -54,7 +54,8 @@ def get_global_gems_lists(
         selected = _parse_ops(blacklist)
     else:
         defaults = _read_defaults()
-        selected = list(defaults["platforms"].get(vendor_name, []))
+        selected = list(defaults["platforms"].get("*", []))
+        selected += defaults["platforms"].get(vendor_name, [])
         model = model_name if model_name is not None else env.get(_PREFIX + "MODEL", "")
         model_defaults = defaults["models"].get(model, {})
         selected += model_defaults.get("*", [])

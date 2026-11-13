@@ -1,5 +1,12 @@
 {
-    "platforms": {},
+    "platforms": {
+        "*": [
+            "copy",
+            "copy_",
+            "zero",
+            "is_same_size"
+        ]
+    },
     "models": {
         "minimax_h3": {
             "nvidia": [

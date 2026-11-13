@@ -99,13 +99,17 @@ LIGHTX2V_FL_GLOBAL_GEMS=1 PLATFORM=flagos python lightx2v/infer.py ...
 
 ### Global ATen selection rules
 
+The default exclusions on every platform are `copy`, `copy_`, `zero`, and
+`is_same_size`. These are FlagGems implementation names; `zero_` is a separate
+in-place operator and is not an alias for `zero`.
+
 These settings apply only when global patching is enabled. They do not control
 explicit weight-template calls such as `flagos_rms_norm`.
 
 The precedence follows vllm-plugin-FL: nonempty whitelist and blacklist values
 conflict. A whitelist replaces all default exclusions and ignores append. An
-explicit blacklist replaces both platform and model defaults. Otherwise the
-blacklist combines platform defaults, model defaults for `*`, then model defaults
+explicit blacklist replaces all common, platform and model defaults. Otherwise the
+blacklist combines common (`platforms.*`) defaults, platform defaults, model defaults for `*`, then model defaults
 for the detected FlagGems vendor. Append extends the selected blacklist; duplicates
 are removed in first-seen order. `GEMS_UNUSED` retains its exclusion behavior as a
 legacy blacklist alias. Setting both it and `GEMS_BLACKLIST` to nonempty values is
