@@ -1,4 +1,4 @@
 # Install vendor-matched torch/compiler first. Use pip install --no-deps -r this file.
 # Draft review revisions; not a validated production release.
 flag_gems @ git+https://github.com/CherryLemon/FlagGems.git@3448d75deaacd9b673c071411b5766c82c1d4c2a
-flag-omni @ git+https://github.com/flagos-ai/FlagOmni.git@726ba5ce480a5163b5748ecc7a08c3f4f5519b75
+flag-omni @ git+https://github.com/flagos-ai/FlagOmni.git@811283ed7b2b44f53f7c38eef1679416859a54e2

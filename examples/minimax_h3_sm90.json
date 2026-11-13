@@ -23,7 +23,7 @@
   "fl_dispatch": {
     "sage_attention": {
       "order": ["flagomni"],
-      "parameters": {"pv_dtype": "fp8", "implementation": "sm90"}
+      "parameters": {"pv_dtype": "fp8"}
     },
     "h3_rms_norm": {
       "order": ["flagomni"],

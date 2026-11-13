@@ -54,7 +54,7 @@ def test_sage_dense_abi_and_explicit_precision(callers, monkeypatch):
     weight.config = {
         "fl_dispatch": {
             "sage_attention": {
-                "parameters": {"pv_dtype": "fp8", "implementation": "sm90"}
+                "parameters": {"pv_dtype": "fp8"}
             }
         }
     }

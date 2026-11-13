@@ -74,3 +74,14 @@ def test_shipped_h3_example_selects_flagomni():
     )
     for op in ("sage_attention", "h3_rms_norm", "h3_swiglu"):
         assert resolve_policy(op, config=config)[0] == ("flagomni",)
+
+
+def test_sage_example_uses_automatic_backend_selection():
+    import json
+    from pathlib import Path
+
+    config = json.loads(
+        (Path(__file__).parents[1] / "examples/minimax_h3_sm90.json").read_text()
+    )
+    params = config["fl_dispatch"]["sage_attention"]["parameters"]
+    assert params == {"pv_dtype": "fp8"}
