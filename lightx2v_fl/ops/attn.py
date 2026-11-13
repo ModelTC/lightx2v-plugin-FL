@@ -7,100 +7,43 @@ Layout follows the WAN varlen convention used across lightx2v_platform:
 
 from __future__ import annotations
 
-import warnings
+import itertools
 
 import torch
 import torch.nn.functional as F
-
 from lightx2v.utils.registry_factory import ATTN_WEIGHT_REGISTER
 from lightx2v_platform.ops.attn.template import AttnWeightTemplate
 
-
-def _resolve_flaggems_attention():
-    """Try multiple entry points to resolve the FlagGems attention operator."""
-    try:
-        import flag_gems
-    except Exception:
-        return None
-
-    attn_obj = getattr(getattr(flag_gems, "ops", None), "attention", None)
-
-    # 1. If ops.attention is directly callable.
-    if callable(attn_obj):
-        return attn_obj
-
-    # 2. If ops.attention is a module/object, probe for concrete function names.
-    if attn_obj is not None:
-        for name in (
-            "scaled_dot_product_attention",
-            "flash_attention_forward",
-            "flash_attn_varlen_func",
-        ):
-            fn = getattr(attn_obj, name, None)
-            if callable(fn):
-                return fn
-
-    # 3. For older versions, look directly under the flag_gems root.
-    fn = getattr(flag_gems, "scaled_dot_product_attention", None)
-    if callable(fn):
-        return fn
-
-    return None
+from lightx2v_fl.dispatch import dispatch_op
 
 
-_GEMS_ATTN = _resolve_flaggems_attention()
-_ATTN_STATS = {"gems": 0, "fallback": 0}
-
-
-def _sdp(q4d: torch.Tensor, k4d: torch.Tensor, v4d: torch.Tensor) -> torch.Tensor:
-    """Scaled-dot-product attention on [1, L, H, D] inputs → [1, L, H, D]."""
-    
-    # --- Try the FlagGems operator ---
-    if _GEMS_ATTN is not None:
-        try:
-            q_t = q4d.permute(0, 2, 1, 3).contiguous()
-            k_t = k4d.permute(0, 2, 1, 3).contiguous()
-            v_t = v4d.permute(0, 2, 1, 3).contiguous()
-            
-            out = _GEMS_ATTN(q_t, k_t, v_t)
-            
-            # Count and print logs for the first 20 successful calls.
-            _ATTN_STATS["gems"] += 1
-            if _ATTN_STATS["gems"] <= 20:
-                print(
-                    "[flagos_attn_runtime] backend=FlagGems",
-                    "q=", tuple(q4d.shape),
-                    "k=", tuple(k4d.shape),
-                    "out=", tuple(out.shape),
-                    flush=True,
-                )
-                
-            return out.permute(0, 2, 1, 3)
-        except Exception as exc:  # pragma: no cover
-            warnings.warn(f"[flagos_flash_attn] FlagGems attention failed ({exc}); using torch SDPA.", stacklevel=2)
-
-    # --- Fallback: use PyTorch native SDPA ---
-    _ATTN_STATS["fallback"] += 1
-    if _ATTN_STATS["fallback"] <= 20:
-        print(
-            "[flagos_attn_runtime] backend=PyTorch (Fallback)",
-            "q=", tuple(q4d.shape),
-            "k=", tuple(k4d.shape),
-            flush=True,
-        )
-
+def _sdp(
+    q4d: torch.Tensor, k4d: torch.Tensor, v4d: torch.Tensor, config=None
+) -> torch.Tensor:
+    """Dense attention on [B, L, H, D] inputs -> [B, L, H, D]."""
     q_t = q4d.permute(0, 2, 1, 3).contiguous()
     k_t = k4d.permute(0, 2, 1, 3).contiguous()
     v_t = v4d.permute(0, 2, 1, 3).contiguous()
-    
-    out = F.scaled_dot_product_attention(q_t, k_t, v_t)
-    
+    out = dispatch_op(
+        "attention",
+        q_t,
+        k_t,
+        v_t,
+        torch_impl=_torch_sdp,
+        config=config,
+    )
     return out.permute(0, 2, 1, 3)
+
+
+def _torch_sdp(q, k, v, **parameters):
+    return F.scaled_dot_product_attention(q, k, v, **parameters)
 
 
 @ATTN_WEIGHT_REGISTER("flagos_flash_attn")
 class FlagOSFlashAttnWeight(AttnWeightTemplate):
     """FlagOS attention. Registered as ``flagos_flash_attn``."""
+
+    _fl_dispatch_operator = "attention"
 
     def __init__(self):
         self.config = {}
@@ -116,32 +59,80 @@ class FlagOSFlashAttnWeight(AttnWeightTemplate):
         max_seqlen_kv=None,
         **kwargs,
     ):
-        if q.ndim == 4:
-            bs = q.shape[0]
-            q = q.reshape(-1, q.shape[-2], q.shape[-1])
-            k = k.reshape(-1, k.shape[-2], k.shape[-1])
-            v = v.reshape(-1, v.shape[-2], v.shape[-1])
-        else:
-            bs = 1
+        if q.ndim not in (3, 4) or k.ndim != q.ndim or v.ndim != q.ndim:
+            raise ValueError("Q/K/V must share a 3D packed or 4D batched layout")
+        if k.shape[:-1] != v.shape[:-1] or q.shape[-1] != k.shape[-1]:
+            raise ValueError("Incompatible Q/K/V shapes")
+        if q.shape[-2] != k.shape[-2]:
+            raise ValueError("Q/K/V must have matching head counts")
+        width = q.shape[-2] * v.shape[-1]
+        if q.ndim == 4 and (q.shape[0] != k.shape[0]):
+            raise ValueError("Q/K/V must have matching batch sizes")
+        if cu_seqlens_q is None:
+            if cu_seqlens_kv is not None:
+                raise ValueError("cu_seqlens_kv requires cu_seqlens_q")
+            # Preserve the batch dimension, including unequal Q and KV lengths.
+            inputs = (
+                (q, k, v) if q.ndim == 4 else tuple(x.unsqueeze(0) for x in (q, k, v))
+            )
+            return _sdp(*inputs, self.config).reshape(-1, width)
 
-        total_q = q.shape[0]
-
-        # Fast path: single sequence.
-        if cu_seqlens_q is None or bs == 1:
-            x = _sdp(q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0))
-            return x.squeeze(0).reshape(total_q, -1)
-
-        # Varlen path: one call per sequence (handles differing Q / KV lengths).
-        outputs = []
-        batch_size = cu_seqlens_q.shape[0] - 1
+        batch_shape = (q.shape[:2], k.shape[:2]) if q.ndim == 4 else None
+        q, k, v = (x.reshape(-1, x.shape[-2], x.shape[-1]) for x in (q, k, v))
         ckv = cu_seqlens_kv if cu_seqlens_kv is not None else cu_seqlens_q
-        for i in range(batch_size):
-            qs, qe = int(cu_seqlens_q[i]), int(cu_seqlens_q[i + 1])
-            ks, ke = int(ckv[i]), int(ckv[i + 1])
+
+        def boundaries(prefix, total, maximum, name):
+            if (
+                prefix.ndim != 1
+                or prefix.numel() < 2
+                or prefix.dtype not in (torch.int32, torch.int64)
+            ):
+                raise ValueError(
+                    f"{name} must be a 1D integer cumulative-length tensor"
+                )
+            # This eager varlen fallback already needs host slicing. Copy once,
+            # rather than synchronizing for every boundary. Not graph-safe.
+            points = prefix.tolist()
+            lengths = [b - a for a, b in itertools.pairwise(points)]
+            if points[0] != 0 or points[-1] != total or any(n < 0 for n in lengths):
+                raise ValueError(
+                    f"{name} must monotonically cover all tokens from zero"
+                )
+            if maximum is not None and max(lengths) > maximum:
+                raise ValueError(f"{name} exceeds max_seqlen")
+            return points
+
+        cq = boundaries(cu_seqlens_q, q.shape[0], max_seqlen_q, "cu_seqlens_q")
+        ck = boundaries(ckv, k.shape[0], max_seqlen_kv, "cu_seqlens_kv")
+        if len(cq) != len(ck):
+            raise ValueError("Q and KV must describe the same number of sequences")
+        if batch_shape is not None:
+            # A dense batch must not be repartitioned across physical rows.
+            for points, (batch, length) in zip((cq, ck), batch_shape):
+                if points != [i * length for i in range(batch + 1)]:
+                    raise ValueError(
+                        "4D cumulative lengths must match dense batch boundaries"
+                    )
+            return _sdp(
+                q.reshape(*batch_shape[0], *q.shape[-2:]),
+                k.reshape(*batch_shape[1], *k.shape[-2:]),
+                v.reshape(*batch_shape[1], *v.shape[-2:]),
+                self.config,
+            ).reshape(-1, width)
+
+        outputs = []
+        for qs, qe, ks, ke in zip(cq, cq[1:], ck, ck[1:]):
+            if qs == qe:
+                continue
+            if ks == ke:
+                # SDPA's empty-key result is zero; avoid backend-dependent kernels.
+                outputs.append(v.new_zeros((qe - qs, width)))
+                continue
             xi = _sdp(
                 q[qs:qe].unsqueeze(0),
                 k[ks:ke].unsqueeze(0),
                 v[ks:ke].unsqueeze(0),
+                self.config,
             )
-            outputs.append(xi.squeeze(0).reshape(qe - qs, -1))
-        return torch.cat(outputs, dim=0)
+            outputs.append(xi.reshape(qe - qs, width))
+        return torch.cat(outputs, dim=0) if outputs else v.new_empty((0, width))

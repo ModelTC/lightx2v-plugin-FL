@@ -5,8 +5,7 @@ the [FlagOS](https://github.com/FlagOpen) unified multi-chip stack:
 
 - **[FlagGems](https://github.com/FlagOpen/FlagGems)** — a Triton operator
   library that auto-detects the underlying vendor (NVIDIA / Ascend / Cambricon /
-  MetaX / MUSA / Kunlun / Iluvatar / …) and runs *one* set of kernels across all
-  of them.
+  MetaX / MUSA / Kunlun / Iluvatar / …) and selects supported implementations for each backend.
 - **[FlagCX](https://github.com/FlagOpen/FlagCX)** — a cross-chip collective
   communication library that plugs into PyTorch as a `flagcx` ProcessGroup
   backend.
@@ -17,10 +16,11 @@ LightX2V's `lightx2v_platform` already abstracts domestic chips, but each chip
 lives in its own `ops/<attn|mm|norm|rope>/<chip>/` directory with a hand-written
 kernel set. That is N adaptations for N chips.
 
-`flagos` is different: it is **one** `PLATFORM=flagos` backend that covers *every*
-chip FlagOS supports, by delegating compute to FlagGems and communication to
-FlagCX. Add a chip to FlagOS → it works in LightX2V through this plugin, no new
-LightX2V code.
+`flagos` is one `PLATFORM=flagos` integration that delegates compute to FlagGems
+and communication to FlagCX or the vendor runtime. Each model, specialized
+fusion and communication path still needs validation on the target platform.
+Install the matching vendor runtime and operator distributions before enabling
+a model-specific integration.
 
 ```
             ┌──────────────────────────────────────────────┐
@@ -42,19 +42,24 @@ LightX2V code.
 
 ## Install
 
+The plugin declares shared `loguru`, `flag_gems` and `flag-omni` dependencies in
+`pyproject.toml`; these are used across model integrations, not an H3-only extra.
+Install the platform-matched distributions first. Vendor PyTorch, FlagTree/Triton,
+the LightX2V host and optional FlagCX remain platform/environment dependencies.
+Do not replace an accelerator image's vendor packages with generic CUDA wheels.
+
 ```bash
-# 1. the plugin (this repo)
-pip install -e .
-
-# 2. FlagGems for your chip (example: NVIDIA)
-pip install "flag_gems[nvidia]"      # or [ascend], [cambricon], ...
-
-# 3. (optional, multi-card) FlagCX torch plugin for your chip
-#    see https://github.com/FlagOpen/FlagCX
+# Inside a prepared vendor environment with the shared dependencies installed:
+python -m pip install --no-deps -e .
+python -m pip check
 ```
 
-`flag_gems` and `flagcx` are **not** hard dependencies — the plugin degrades to
-torch reference implementations when they are absent, so `import` never breaks.
+No universal package version is imposed: a platform maintainer must choose and
+validate its matching operator builds. In particular, the validated P800 image
+uses vendor FlagGems 5.4.0rc2.post1; preserve that distribution. `--no-deps` avoids
+resolver-driven replacement but requires checking dependencies yourself.
+Generic operators can select an existing torch reference before execution;
+this is not a promise of full-model support or a fallback after a kernel error.
 
 ## Use
 
@@ -90,8 +95,53 @@ LIGHTX2V_FL_GLOBAL_GEMS=1 PLATFORM=flagos python lightx2v/infer.py ...
 |---|---|---|
 | `LIGHTX2V_FL_AUTO_REGISTER` | `1` | Register on `import lightx2v_fl`. |
 | `LIGHTX2V_FL_GLOBAL_GEMS` | `0` | `flag_gems.enable()` at aten level. |
-| `LIGHTX2V_FL_GEMS_UNUSED` | – | Comma-list of aten ops to exclude from global patch. |
+| `LIGHTX2V_FL_GEMS_WHITELIST` | – | Register only these ATen ops with `only_enable(include=...)`. |
+| `LIGHTX2V_FL_GEMS_BLACKLIST` | – | Replace platform/model exclusions. |
+| `LIGHTX2V_FL_GEMS_BLACKLIST_APPEND` | – | Append exclusions to the selected blacklist. |
+| `LIGHTX2V_FL_GEMS_UNUSED` | – | Legacy alias for `GEMS_BLACKLIST`. |
+| `LIGHTX2V_FL_GEMS_MODEL` | – | Exact model key for global ATen defaults. |
 | `LIGHTX2V_FL_DISABLE_FLAGCX` | `0` | Use vendor-native CCL instead of FlagCX. |
+
+### Global ATen selection rules
+
+The default exclusions on every platform are `copy`, `copy_`, `zero`, `zero_`, and
+`is_same_size`. These are FlagGems implementation names; `zero_` is a separate
+in-place operator and is not an alias for `zero`.
+
+These settings apply only when global patching is enabled. They do not control
+explicit weight-template calls such as `flagos_rms_norm`.
+
+The precedence follows vllm-plugin-FL: nonempty whitelist and blacklist values
+conflict. A whitelist replaces all default exclusions and ignores append. An
+explicit blacklist replaces all common, platform and model defaults. Otherwise the
+blacklist combines common (`platforms.*`) defaults, platform defaults, model defaults for `*`, then model defaults
+for the detected FlagGems vendor. Append extends the selected blacklist; duplicates
+are removed in first-seen order. `GEMS_UNUSED` retains its exclusion behavior as a
+legacy blacklist alias. Setting both it and `GEMS_BLACKLIST` to nonempty values is
+an error, including when their contents match. It also conflicts with a whitelist.
+
+An unset variable or `""` selects defaults. As in vllm-plugin-FL, selection uses the
+raw string: spaces or commas alone select an explicit empty list. Such a blacklist
+clears defaults; such a whitelist is passed to `only_enable(include=[])` and may
+be rejected by FlagGems. Names are stripped of surrounding whitespace and empty
+entries are dropped; `none` is an ordinary operator name, not a sentinel.
+Use the names accepted by the installed FlagGems build; name validation belongs
+to FlagGems.
+
+Maintainers can add exclusions to [`global_gems.json`](lightx2v_fl/configs/global_gems.json):
+`platforms` maps FlagGems vendor names to lists, while `models` maps exact model
+keys to `{ "*": [...], "nvidia": [...] }`. The platform maps are empty; the NVIDIA MiniMax-H3 model policy excludes precision-sensitive or slower generic replacements, preserving
+the existing default of `enable(unused=None)`. Unknown vendors/models add no defaults.
+
+Set `LIGHTX2V_FL_GEMS_MODEL` before automatic registration. Alternatively, leave
+`LIGHTX2V_FL_GLOBAL_GEMS=0` and call
+`from lightx2v_fl.enable import enable_global_flaggems`, then
+`enable_global_flaggems(model_name="wan2.1")` after selecting the model. `vendor_name=` can be supplied explicitly; otherwise FlagGems identifies it.
+Global registration remains process-wide and idempotent: configure it before the
+first successful enable. Later calls do not reconfigure it. Missing FlagGems keeps
+its existing warning/fallback behavior; invalid configuration, unsupported whitelist
+APIs and registration errors propagate from an explicit enable call (automatic
+package registration retains its existing warning guard).
 
 ## Activation: how the plugin is discovered
 
@@ -124,10 +174,74 @@ import time.
 > tables directly. The upstream hook fixes it properly by running plugin
 > registration *before* the merge.
 
+### Explicit operator dispatch
+
+RMSNorm, LayerNorm and dense attention calls now share a small dispatch entry
+point, `lightx2v_fl.dispatch.dispatch_op`. Their existing registry keys, tensor
+layouts and default order (`flaggems`, then `torch`) are preserved. Global ATen
+registration is separate: its lists do not control these explicit calls. A
+`torch` backend can still encounter globally patched ATen ops if you enabled them.
+RoPE and the linear/quantized-linear paths retain their current implementations.
+
+Use the weight template's normal `set_config(config)` / `config` entry point:
+
+```python
+weight.set_config({
+    "model_cls": "wan2.1",
+    "fl_dispatch": {
+        "rms_norm": {"order": ["torch"]},
+        "attention": {
+            "order": ["flaggems", "torch"],
+            "parameters": {"scale": 0.125, "is_causal": False}
+        }
+    }
+})
+```
+
+Policies are merged by field in this order: built-in defaults, detected FlagGems
+vendor, model `*` defaults, model/vendor defaults, user `fl_dispatch`. Each supplied
+`order` or `parameters` field replaces the entire earlier field; `{}` parameters
+clear inherited overrides. Parameters override the caller's defaults (for example
+the norm template's `eps`) and are forwarded unchanged to the selected backend.
+The shipped [`dispatch.json`](lightx2v_fl/configs/dispatch.json) has empty
+`platforms`/`models` maps, so successful default calls retain their behavior.
+Maintainers can add policies using this schema:
+
+```json
+{
+  "platforms": {"nvidia": {"rms_norm": {"order": ["flaggems", "torch"]}}},
+  "models": {"wan2.1": {"*": {"attention": {"parameters": {"scale": 0.125}}}}}
+}
+```
+
+Model keys match `config["model_cls"]` exactly; vendor names come from FlagGems.
+Unknown models/vendors add no defaults. Supported operators are `rms_norm`,
+`layer_norm`, and `attention`; backends are `flaggems` and `torch`. Norms accept
+policy parameter `eps`; attention accepts `scale`, `is_causal`, and `dropout_p`
+when the selected API supports them. Empty orders, duplicate/unknown
+backends, unknown fields/operators and unsupported parameter names are errors.
+
+Fallback happens **before execution** when an API is absent, its signature cannot
+be inspected/bound, or a known contract is unavailable (non-affine LayerNorm).
+Use an order containing only `flaggems` to require it; no supported implementation
+raises `NoImplementationError`. After a call starts, every error propagates,
+including `TypeError` and `NotImplementedError`; failed computations are never
+retried on another backend. This deliberately replaces the previous broad
+runtime-exception fallback. Legacy RMS signatures are recognized by signature
+binding, without trial execution. Dense attention uses only SDPA-compatible APIs;
+varlen-only and tuple-returning flash forward APIs are not substituted for SDPA.
+Successful calls keep their old layout adaptation and reference math. Hardware
+shape/dtype support and numerical behavior still require validation for the
+installed vendor build.
+
+Dispatch reads each weight's current configuration, so one weight's override
+does not mutate another's policy.
+
 ## Tests
 
 ```bash
-pytest -q        # CPU-only smoke tests: wiring + torch-fallback correctness
+pytest -q tests/test_dispatch.py tests/test_dispatch_callers.py  # isolated CPU contracts
+pytest -q tests/test_smoke.py  # requires the LightX2V host; CPU fallback smoke
 ```
 
 ## Status
@@ -140,3 +254,12 @@ roadmap.
 ## License
 
 Apache-2.0
+
+### MiniMax-H3 global operator policy
+
+Selecting `model_name="minimax_h3"` (or
+`LIGHTX2V_FL_GEMS_MODEL=minimax_h3`) on NVIDIA uses the packaged conservative
+exclusion list for H3. It leaves native GEMMs and sensitive arithmetic in place.
+Explicit whitelist/blacklist/append precedence is unchanged; this policy does
+not enable global registration, install H3 fusions or assert whole-model
+support on an untested chip. Non-NVIDIA vendors retain their existing defaults.

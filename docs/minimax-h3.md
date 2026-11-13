@@ -1,0 +1,76 @@
+# MiniMax-H3 integration
+
+This model-specific integration depends on the independent global ATen policy
+and explicit operator dispatch changes in PRs #6 and #7. Those PRs contain no
+H3 adaptation. The H3 changes, config and lifecycle are maintained here.
+
+Numerical code is in `flag_omni.lightx2v` (operation-named fusion and SageAttention APIs)
+and `flag_gems` (generic ATen, metadata and GEMM). H3 policy names map to
+FlagOmni APIs in `lightx2v_fl/models/h3_operators.py`; model adaptation belongs
+only in this plugin, not FlagOmni. The plugin calls public APIs. It does
+not load experimental source paths or patch installed numerical dependencies.
+
+## Install and run
+
+Install the device-matched PyTorch and compiler first, then the reviewed/pinned
+FlagGems and FlagOmni distributions. These are plugin-level dependencies declared
+in `pyproject.toml`, shared by all model integrations. Install this plugin with
+`python -m pip install --no-deps .` in the prepared vendor environment and check
+`python -m pip check`; do not replace vendor operator packages with a generic
+source pin.
+
+`examples/minimax_h3_sm90.json` is a single-H100, fully resident, fixed-conditioning
+configuration. Set its AdaLN cache directory to a cache generated with the same
+model/config using the upstream `tools/cache_minimax_h3_adaln` scripts. The host
+revision used during development is `c58c16d607c49bf6021fecc6238ed177752d7e87`.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 LIGHTX2V_FL_DISABLE_FLAGCX=1 \
+python examples/minimax_h3.py --enable-fusions \
+  --model-path /models/MiniMax-H3 --config examples/minimax_h3_sm90.json \
+  --conditioning /inputs/conditioning.pt --conditioning-sha256 "$CONDITIONING_SHA256" \
+  --prompt "$PROMPT" --output /outputs/h3.mp4
+ffmpeg -v error -i /outputs/h3.mp4 -f null -
+```
+
+The conditioning dictionary contains BF16 `[tokens,5120]` `prompt_embeds` and
+INT64 `text_token_tags`, generated for this exact prompt. Fixtures/model weights
+are not distributed. For normal text encoding, omit both conditioning arguments
+and set `text_encoder_load_on_init=true`; that path has a different memory and
+timing scope and requires its own acceptance.
+
+The context owns one runner in an exclusive process: it temporarily registers
+the selected DiT ATen implementations, disables global registration during VAE
+decode, installs explicit VAE fusions and restores its own patches on exit. It
+does not support concurrent unrelated runners or foreign ATen registrars.
+Unsupported VAE metadata takes the existing host path before computation;
+errors during computation propagate. Quantized Sage has no dense-SDPA retry.
+
+S5000/other domestic devices require their vendor toolchain and host-framework
+adaptation. Use BF16 PV with an explicitly supported baseline/TLE implementation,
+choose the matching RMS tier, and initially pass `--no-vae-fusion`. The SM90 JSON
+must not be used unchanged: FP8 Sage and native-order FP64 rotary tables are
+SM90-specific. Operator-level S5000 evidence does not establish complete H3
+quality, multi-card compatibility, or performance on another backend.
+
+H3 multi-card configurations use Ulysses **sequence** parallelism (not tensor
+parallelism). Configure the upstream `parallel.seq_p_size`, `seq_p_attn_type`
+and collective backend only after bounded communication tests. Keep VAE
+parallelism, offload, seed, frames, steps and timing boundaries explicit.
+
+The default H3 and Sage backend is `flagomni`. The historical policy key
+`lightx2v_gems` remains an alias for this backend, not a dependency on the old
+package. The shipped SM90 example explicitly selects `flagomni` for both Sage
+and RMS. This wiring revision has CPU/ABI tests but no new full-model GPU result.
+
+## Native BF16 platform bring-up
+
+The launcher now leaves host FFN, rotary, scheduler and VAE operations unchanged
+by default. Set `attn_type` and `rms_type` to registry implementations validated
+in your vendor LightX2V image. This avoids requiring Sage or specialized
+FlagOmni fusions just to test a new platform. `--enable-fusions` opts into the
+scoped H3 fusion integration; `--no-vae-fusion` narrows that opt-in further.
+This is pre-execution selection, not recovery from an execution failure.
+Explicit `flagos_h3_rms_norm`/Sage keys still call their selected libraries.
+Do not use the SM90 JSON unchanged on another device. Validate the selected
+operator contracts and communication path before increasing workload size.
