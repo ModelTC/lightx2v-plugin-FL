@@ -28,7 +28,7 @@ OPERATORS = {
     "h3_reference_blend": frozenset(),
     "h3_rotary_tables": frozenset({"freq_dim", "theta"}),
 }
-BACKENDS = {"flaggems", "flagomni", "lightx2v_gems", "torch"}
+BACKENDS = {"flash_attn", "flaggems", "flagomni", "lightx2v_gems", "torch"}
 
 
 @lru_cache(maxsize=1)

@@ -26,6 +26,7 @@ from loguru import logger
 
 from lightx2v_fl.aten_policy import get_global_gems_lists
 from lightx2v_fl.dispatch import dispatch_op
+from lightx2v_fl.dispatch.backends import load_flaggems
 
 from ._patches import ScopedAttributes, ScopedPatches
 from .h3_vae import H3VaeFusions
@@ -117,7 +118,11 @@ class H3InferenceContext:
         original_step = self.runner.scheduler._step
 
         pre = self.runner.model.pre_infer
-        if torch.cuda.is_available() and torch.cuda.get_device_capability() == (9, 0):
+        if (
+            getattr(load_flaggems(), "vendor_name", None) == "nvidia"
+            and torch.cuda.is_available()
+            and torch.cuda.get_device_capability() == (9, 0)
+        ):
             original_rotary = pre._rotary_embedding
 
             @wraps(original_rotary)

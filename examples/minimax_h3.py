@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import random
+from contextlib import nullcontext
 from pathlib import Path
 
 
@@ -32,6 +33,11 @@ def main():
     parser.add_argument("--conditioning")
     parser.add_argument("--conditioning-sha256")
     parser.add_argument("--no-vae-fusion", action="store_true")
+    parser.add_argument(
+        "--enable-fusions",
+        action="store_true",
+        help="Opt into validated FlagOmni H3 fusions; default keeps host operations",
+    )
     args = parser.parse_args()
     if bool(args.conditioning) != bool(args.conditioning_sha256):
         parser.error("Fixed conditioning requires both a file and its expected SHA256")
@@ -45,11 +51,8 @@ def main():
     from lightx2v_fl.models.minimax_h3 import H3InferenceContext
 
     config = json.loads(Path(args.config).read_text())
-    if (
-        config.get("attn_type") != "flagos_sage_attn"
-        or config.get("rms_type") != "flagos_h3_rms_norm"
-    ):
-        raise ValueError("Use the explicit H3 Sage and native-order RMS registry keys")
+    if not config.get("attn_type") or not config.get("rms_type"):
+        raise ValueError("Set validated attention and RMS registry keys in the config")
     fixed = None
     if args.conditioning:
         fixture = Path(args.conditioning)
@@ -114,7 +117,12 @@ def main():
 
         pipe.runner.run_text_encoder = fixed_conditioner
     try:
-        with H3InferenceContext(pipe.runner, vae_fusion=not args.no_vae_fusion):
+        context = (
+            H3InferenceContext(pipe.runner, vae_fusion=not args.no_vae_fusion)
+            if args.enable_fusions
+            else nullcontext()
+        )
+        with context:
             pipe.generate(
                 task="t2av",
                 seed=args.seed,

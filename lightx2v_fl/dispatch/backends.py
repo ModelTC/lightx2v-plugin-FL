@@ -103,3 +103,40 @@ def flaggems_call(gems, op_name, args, kwargs):
         if call is not None:
             return call
     return None
+
+
+def flash_attn_call(op_name, args, kwargs):
+    """Explicit vendor FlashAttention adapter, BHSD in/out; never a Sage alias.
+
+    The vendor image owns the flash_attn package. Missing packages permit
+    selection fallback; installed-package errors and execution errors propagate.
+    """
+    if op_name != "attention" or len(args) != 3:
+        return None
+    try:
+        from flash_attn import flash_attn_func
+    except ModuleNotFoundError as exc:
+        if exc.name == "flash_attn":
+            return None
+        raise
+    q, k, v = args
+    if any(x.ndim != 4 for x in args):
+        return None
+    # FlashAttention uses bottom-right causal alignment; SDPA uses top-left.
+    if kwargs.get("is_causal", False) and q.shape[-2] != k.shape[-2]:
+        return None
+    parameters = {
+        "dropout_p": kwargs.get("dropout_p", 0.0),
+        "softmax_scale": kwargs.get("scale"),
+        "causal": kwargs.get("is_causal", False),
+        "return_attn_probs": False,
+    }
+
+    # Layout adaptation is performed only after this backend is selected.
+    def run():
+        result = flash_attn_func(
+            *(x.transpose(1, 2).contiguous() for x in (q, k, v)), **parameters
+        )
+        return result.transpose(1, 2)
+
+    return run

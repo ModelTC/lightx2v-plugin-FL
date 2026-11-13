@@ -5,8 +5,7 @@ the [FlagOS](https://github.com/FlagOpen) unified multi-chip stack:
 
 - **[FlagGems](https://github.com/FlagOpen/FlagGems)** — a Triton operator
   library that auto-detects the underlying vendor (NVIDIA / Ascend / Cambricon /
-  MetaX / MUSA / Kunlun / Iluvatar / …) and runs *one* set of kernels across all
-  of them.
+  MetaX / MUSA / Kunlun / Iluvatar / …) and selects supported implementations for each backend.
 - **[FlagCX](https://github.com/FlagOpen/FlagCX)** — a cross-chip collective
   communication library that plugs into PyTorch as a `flagcx` ProcessGroup
   backend.
@@ -17,10 +16,11 @@ LightX2V's `lightx2v_platform` already abstracts domestic chips, but each chip
 lives in its own `ops/<attn|mm|norm|rope>/<chip>/` directory with a hand-written
 kernel set. That is N adaptations for N chips.
 
-`flagos` is different: it is **one** `PLATFORM=flagos` backend that covers *every*
-chip FlagOS supports, by delegating compute to FlagGems and communication to
-FlagCX. Add a chip to FlagOS → it works in LightX2V through this plugin, no new
-LightX2V code.
+`flagos` is one `PLATFORM=flagos` integration that delegates compute to FlagGems
+and communication to FlagCX or the vendor runtime. Each model, specialized
+fusion and communication path still needs validation on the target platform.
+See the [platform engineer bring-up guide](docs/platform-bringup.md) for dependency
+preparation, capability selection, launch commands and acceptance checks.
 
 ```
             ┌──────────────────────────────────────────────┐
@@ -54,7 +54,9 @@ pip install "flag_gems[nvidia]"      # or [ascend], [cambricon], ...
 ```
 
 `flag_gems` and `flagcx` are **not** hard dependencies — the plugin degrades to
-torch reference implementations when they are absent, so `import` never breaks.
+torch reference implementations for supported generic operations when absent.
+The host framework and its dependencies are required; H3-specific FlagOmni
+operators have no automatic torch fallback.
 
 ## Use
 

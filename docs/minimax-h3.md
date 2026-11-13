@@ -25,7 +25,7 @@ revision used during development is `c58c16d607c49bf6021fecc6238ed177752d7e87`.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 LIGHTX2V_FL_DISABLE_FLAGCX=1 \
-python examples/minimax_h3.py \
+python examples/minimax_h3.py --enable-fusions \
   --model-path /models/MiniMax-H3 --config examples/minimax_h3_sm90.json \
   --conditioning /inputs/conditioning.pt --conditioning-sha256 "$CONDITIONING_SHA256" \
   --prompt "$PROMPT" --output /outputs/h3.mp4
@@ -61,3 +61,15 @@ The default H3 and Sage backend is `flagomni`. The historical policy key
 `lightx2v_gems` remains an alias for this backend, not a dependency on the old
 package. The shipped SM90 example explicitly selects `flagomni` for both Sage
 and RMS. This wiring revision has CPU/ABI tests but no new full-model GPU result.
+
+## Native BF16 platform bring-up
+
+The launcher now leaves host FFN, rotary, scheduler and VAE operations unchanged
+by default. Set `attn_type` and `rms_type` to registry implementations validated
+in your vendor LightX2V image. This avoids requiring Sage or specialized
+FlagOmni fusions just to test a new platform. `--enable-fusions` opts into the
+scoped H3 fusion integration; `--no-vae-fusion` narrows that opt-in further.
+This is pre-execution selection, not recovery from an execution failure.
+Explicit `flagos_h3_rms_norm`/Sage keys still call their selected libraries.
+Do not use the SM90 JSON unchanged on another device. See
+[platform bring-up](platform-bringup.md) for capability and validation checks.

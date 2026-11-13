@@ -229,3 +229,57 @@ def test_optional_dependency_import_failure_is_cached_before_compute(monkeypatch
 def test_invalid_config_type(dispatch, config):
     with pytest.raises(TypeError):
         dispatch.resolve_policy("attention", config=config)
+
+
+def test_native_flash_layout_and_parameters(dispatch, monkeypatch):
+    import sys
+
+    seen = {}
+
+    def flash(q, k, v, **kwargs):
+        seen.update(kwargs)
+        assert q.shape == (2, 5, 3, 8)
+        assert k.shape == (2, 7, 3, 8)
+        return q + 1
+
+    monkeypatch.setitem(
+        sys.modules, "flash_attn", SimpleNamespace(flash_attn_func=flash)
+    )
+    q, k, v = torch.randn(2, 3, 5, 8), torch.randn(2, 3, 7, 8), torch.randn(2, 3, 7, 8)
+    config = {"fl_dispatch": {"attention": {"order": ["flash_attn"]}}}
+    result = dispatch.dispatch_op(
+        "attention", q, k, v, torch_impl=None, config=config, scale=0.25
+    )
+    torch.testing.assert_close(result, q + 1)
+    assert seen == {
+        "dropout_p": 0.0,
+        "softmax_scale": 0.25,
+        "causal": False,
+        "return_attn_probs": False,
+    }
+    with pytest.raises(dispatch.NoImplementationError):
+        dispatch.dispatch_op(
+            "attention", q, k, v, torch_impl=None, config=config, is_causal=True
+        )
+
+
+def test_native_flash_failure_does_not_retry(dispatch, monkeypatch):
+    import sys
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("vendor execution failure")
+
+    monkeypatch.setitem(
+        sys.modules, "flash_attn", SimpleNamespace(flash_attn_func=broken)
+    )
+    q = torch.zeros(1, 2, 3, 4)
+    config = {"fl_dispatch": {"attention": {"order": ["flash_attn", "torch"]}}}
+    with pytest.raises(RuntimeError, match="vendor execution failure"):
+        dispatch.dispatch_op(
+            "attention",
+            q,
+            q,
+            q,
+            torch_impl=lambda *a: pytest.fail("retry"),
+            config=config,
+        )
